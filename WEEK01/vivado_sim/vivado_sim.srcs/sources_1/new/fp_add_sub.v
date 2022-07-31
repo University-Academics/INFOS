@@ -1,17 +1,20 @@
-module Float_Add(clk,rst,start,X,Y,valid,sum);
+module float_add_sub(clk,rst,start,X,Y,operation,valid,sum);
     input clk;
     input rst;
     input start;
+    input operation;            // 0- Addition / 1- Substraction
     
     // IEEE FORMAT INPUTS AND OUTPUT
     input [31:0]X,Y;
     output [31:0]sum;
+    
+    // INDICATE WHEN THE OUTPUT IS OF VALID FORM
     output valid;
     
     reg X_sign,Y_sign,sum_sign, next_sum_sign;
     reg [7:0] X_exp, Y_exp, sum_exp, next_sum_exp;
     reg [23:0] X_mant, Y_mant;                      // Extracted mantissa {1, extraction}
-    reg [23:0] X_mantissa, Y_mantissa;               // Normalized mantissa (equalizing exponents)
+    reg [23:0] X_mantissa, Y_mantissa;              // Normalized mantissa (equalizing exponents)
     reg [24:0] sum_mantissa, next_sum_mantissa;     // Providing space for overflow
     
     reg valid, next_valid;
@@ -19,6 +22,7 @@ module Float_Add(clk,rst,start,X,Y,valid,sum);
     reg [24:0] sum_mantissa_temp;
     reg [1:0] next_state, pres_state;
     
+    // Defining States of Module
     parameter IDLE = 2'b00;
     parameter START = 2'b01;
     parameter SHIFT_MANT =2'b10;
@@ -52,7 +56,7 @@ module Float_Add(clk,rst,start,X,Y,valid,sum);
         next_valid = 1'b0;
         
         X_sign = X[31];
-        Y_sign = Y[31];
+        Y_sign = (operation)? ~Y[31]: Y[31];
         X_exp = X[30:23];
         Y_exp = Y[30:23];
         X_mant = {1'b1,X[22:0]};
@@ -71,7 +75,7 @@ module Float_Add(clk,rst,start,X,Y,valid,sum);
                 next_valid = 1'b0;
                 
                 X_sign = X[31];
-                Y_sign = Y[31];
+                Y_sign = (operation)? ~Y[31]: Y[31];
                 X_exp = X[30:23];
                 Y_exp = Y[30:23];
                 X_mant = {1'b1,X[22:0]};
