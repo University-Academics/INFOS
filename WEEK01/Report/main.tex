@@ -86,18 +86,54 @@
     \end{figure}
     \newline
     \begin{tabular}{l l}
-        ROW 1 : & Clock \\
-        ROW 3 : & Validity of Answer\\
-        ROW 5 : & Number 1 \\
-        ROW 6 : & Number 2 \\
+        ROW 1 : & Clock              \\
+        ROW 3 : & Validity of Answer \\
+        ROW 5 : & Number 1           \\
+        ROW 6 : & Number 2           \\
         ROW 7 : & Sum
     \end{tabular}
     \vspace{.2cm}
     \newline
     Addition and Subtraction indicated above are choosen in a way to return the same result. During the true value of valid entry simulation returns same result for each operation.
+    \newpage
 
-\newpage
-\appendix
+
+    \section{Traffic Light Controller System : Borella Junction}
+    The situation can be realized as four main states as shown in the figure below.
+    \begin{figure}[h]
+        \begin{minipage}{.24\textwidth}
+            \begin{center}
+                \includegraphics[width=\columnwidth]{state_1}
+                \caption*{state : 1}
+            \end{center}
+        \end{minipage}
+        \begin{minipage}{.24\textwidth}
+            \begin{center}
+                \includegraphics[width=\columnwidth]{state_2}
+                \caption*{state : 2}
+            \end{center}
+        \end{minipage}
+        \begin{minipage}{.24\textwidth}
+            \begin{center}
+                \includegraphics[width=\columnwidth]{state_3}
+                \caption*{state : 3}
+            \end{center}
+        \end{minipage}
+        \begin{minipage}{.24\textwidth}
+            \begin{center}
+                \includegraphics[width=\columnwidth]{state_4}
+                \caption*{state : 4}
+            \end{center}
+        \end{minipage}
+    \end{figure}
+    \newline
+    Transition between states properly done with no intersecting pathways having green at the same time. With these there are 16 states in total.
+    \newline
+    Pedestrain crossing is not considered as the Borella Junction has an underground crossing. A 10 bit counter is used, and throughout each full count the trasition between states happen sequentiall, and then the procedure will iterate.
+    \newpage
+    \appendix
+
+
     \section{FP Add/Sub Implementation}
     \begin{figure}[h]
         \begin{center}
