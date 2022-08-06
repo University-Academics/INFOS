@@ -1,24 +1,4 @@
 `timescale 1ns / 1ps
-//////////////////////////////////////////////////////////////////////////////////
-// Company: 
-// Engineer: 
-// 
-// Create Date: 07/26/2022 08:32:58 PM
-// Design Name: 
-// Module Name: Simulation
-// Project Name: 
-// Target Devices: 
-// Tool Versions: 
-// Description: 
-// 
-// Dependencies: 
-// 
-// Revision:
-// Revision 0.01 - File Created
-// Additional Comments:
-// 
-//////////////////////////////////////////////////////////////////////////////////
-
 
 module PipelineSimulation;
     // Inputs
@@ -31,29 +11,33 @@ module PipelineSimulation;
     wire Cout;
     
     PipelineAdder Adder(clk, A, B, Cin, S, Cout);
+    always begin
+    #8 clk=~clk;
+    end
     initial begin
+    
+     $monitor($time, " A=%d, B=%d, S=%d" , A, B, S);
+        clk=1'b1;
         
+        #16
         A = 124532445;
         B = 212421455;
         Cin = 0;        
-        clk = 0;#5;clk = 1;#5;
         
+        #16
         A = 142352352;
         B = 465693463;
         Cin = 0;
-        clk = 0;#5;clk = 1;#5;
      
+        #16
         A = 847583573;
         B = 347583488;
         Cin = 0;
-        clk = 0;#5;clk = 1;#5;
-        
+
+        #16
         A = 573286762;
         B = 235762376;
         Cin = 0;
-        clk = 0;#5;clk = 1;#5;
-        clk = 0;#5;clk = 1;#5;
-        clk = 0;#5;clk = 1;#5;
         
         
     end

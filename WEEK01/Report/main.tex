@@ -1,9 +1,7 @@
 \documentclass[11pt]{article}
 
 \usepackage{preamble}
-\usepackage{tocloft}
-\setcounter{tocdepth}{1}
-\renewcommand{\cftsecleader}{\cftdotfill{\cftdotsep}}
+
 
 \begin{document}
     \begin{titlepage}
@@ -37,8 +35,83 @@
         \tableofcontents
         \vfill
         \HRule
-        \flushleft {Executable codes can be found \href{https://github.com/University-Academics/INFOS}{here}}
+        \flushleft {Executable codes can be found \href{https://gist.github.com/sanjith1999/62c41b6aa1321804bc55865d851566a7}{here}}
     \end{titlepage}
+
+
+    \section{Ripple Carry Adder \& Pipelined Architecture}
+    The following discussion will illustrate the improvement in the performance of the adder in adding four
+    32-bit numbers consecutively. Adders are formed using four separate eight-bit adders and results are based
+    on giving inputs in two different passions in a way to evaluate the effect of pipelining over performance.
+    For the comparison purposes the average gate delay is considered as $\tau$.
+
+    \subsection{Operation in Normal Mode}
+    A full adder takes at least 2$\tau$ from the time its inputs are available, to ensure useful results are
+    in place. This way propagation of carry-value throughout the blocks leads to a delay of 16$\tau$ for an
+    8-bit adder. Hence an addition between two 32-bit numbers takes $4\times 16\tau = 64\tau$.
+
+    \begin{figure}[h]
+        \begin{center}
+            \includegraphics[width=.85\textwidth]{ripple_adder}
+            \caption*{$\text{Total time taken by adder to perform four consecutive addition} = 4\times 64\tau = 256\tau$}
+        \end{center}
+    \end{figure}
+    \vspace{-.5cm}
+
+    \subsection{Pipelined Architecture}
+    \vspace{-.5cm}
+    \begin{figure}[h]
+        \begin{minipage}{.7\textwidth}
+            \begin{center}
+                \includegraphics[width=.95\columnwidth]{pipe_des}
+                \caption*{Total Time taken = 112$\tau$}
+            \end{center}
+        \end{minipage}
+        \begin{minipage}{.28\textwidth}
+            The Main idea of pipelining is rather than waiting for the whole operation about one addition to complete, make use of
+            the unutilized 8-bit adder blocks to perform the subsequent calculations.In the case of four
+            additions, utilizing idle stages in the adder blocks seem to reduce the accumulated
+            gate delays from 256$\tau$ low to 112$\tau$.
+        \end{minipage}
+        \newline
+        \caption*{Simulation Results}
+        \begin{minipage}{.48\textwidth}
+            \begin{center}
+                \includegraphics[width=.85\columnwidth]{ripple_adder_out}
+                \caption*{Simulation - I : Normal Architecture}
+            \end{center}
+        \end{minipage}
+        \begin{minipage}{.45\textwidth}
+            \begin{center}
+                \includegraphics[width=.85\columnwidth]{pipeline_sim}
+                \caption*{Simulation - II : Pipelined Architecture}
+            \end{center}
+        \end{minipage}
+    \end{figure}
+
+    \section{Carry Look-Ahead Adder}
+    Instead of waiting for carry-bit to propagate through separate full adders, CLA implementation
+    generates carry-bit parallelly with the price of a larger fan-in.
+\vspace{-.25cm}
+    \begin{align*}
+        \text{Carry-Generate }\quad P_i &= A_i \oplus B_i\\
+        \text{Carry-Propagate}\quad G_i &= A_i \cdot B_i\\
+        \text{Carry-Bit} \quad  C_n &= C_0 \prod_{i=1}^{n-1}+\sum_{i=0}^n-1\left\{ G_i \prod_{j=i+1}^{n-1}P_j \right\}
+    \end{align*}
+    In the case of an 8-bit adder, all the carry bits can be generated in an average time of 3$\tau$.
+    Together with a delay of 2$\tau$ in the full adder, an 8-bit adder block takes 5$\tau$ to complete
+    its process.
+    Each block takes 2$\tau$ time to generate the carry-bit necessary for the next block and additionally
+    the first stage takes $\tau$ time more to generate carry generate and propagate terms. Times add up
+    to give a total delay of 11$\tau$ in the completion of addition between two 32-bit numbers.
+    \begin{figure}[h]
+        \begin{center}
+            \includegraphics[width=.95\textwidth]{cla_adder}
+            \caption*{Total time taken for the addition of four numbers = $4\times 11\tau = 44\tau$}
+            \includegraphics[width = .5\textwidth]{cla_adder_sim}
+            \caption*{Simulation - III : CLA Architecture}
+        \end{center}
+    \end{figure}
 
 
     \section{Floating Point Addition/Subtraction}
@@ -60,17 +133,23 @@
             \item If both are of the same sign add two corresponding mantissa and assign it to sum\_mantissa.
             \item Otherwise, subtract the matissa of number with 1 as sign bit from the other and assign the magnitude of it as sum\_mantissa.
         \end{itemize}
-        %\hspace*{\dimexpr\linewidth-\textwidth\relax} At this stage, sum mantissa will contain 25bits to accomadate the overflow.
+        \hspace*{\dimexpr\linewidth-\textwidth\relax} At this stage, sum mantissa will contain 25 bits to accomadate the overflow.
         \item Assign the sum\_sign according to sign of two numbers and above derived answer.
         \item Shift the mantissa left until and 24th-bit position of the mantissa is one and reduce the exponent of the sum accordingly(normalization)
         \item Now discard the implicit 1 and consider only the lower 23-bits of sum\_mantissa.
         \item Final Answer = \{sum\_sign, sum\_exponent, sum\_mantissa\}
     \end{enumerate}
-    Visual implementation of the given algorithm as a flowchart is attached to this report in the end.
+    \begin{figure}[h]
+        \begin{center}
+            \includegraphics[width=.65\textwidth]{algorithm}
+            \caption*{Design Flow of FP Add/Sub}
+        \end{center}
+    \end{figure}
 
     \subsection{Results}
-    The following results obtained from illustrated conditions ensure proper functioning of the unit.
+
     \begin{figure}[h]
+        \caption*{Simulation Results}
         \begin{minipage}{.45\textwidth}
             \begin{center}
                 \includegraphics[width=.95\columnwidth]{operation-6.75_3.75}
@@ -83,15 +162,18 @@
                 \caption*{6.75-3.75 = 3 \& 6.75+(-3.75) = 3}
             \end{center}
         \end{minipage}
+
+        \begin{minipage}{.45\textwidth}
+            \begin{center}
+                \includegraphics[width=.75\columnwidth]{ope_1}
+            \end{center}
+        \end{minipage}
+        \begin{minipage}{.45\textwidth}
+            \begin{center}
+                \includegraphics[width=.75\columnwidth]{ope_2}
+            \end{center}
+        \end{minipage}
     \end{figure}
-    \newline
-    \begin{tabular}{l l}
-        ROW 1 : & Clock              \\
-        ROW 3 : & Validity of Answer \\
-        ROW 5 : & Number 1           \\
-        ROW 6 : & Number 2           \\
-        ROW 7 : & Sum
-    \end{tabular}
     \vspace{.2cm}
     \newline
     Addition and Subtraction indicated above are choosen in a way to return the same result. During the true value of valid entry simulation returns same result for each operation.
@@ -127,17 +209,25 @@
         \end{minipage}
     \end{figure}
     \newline
-    Transition between states properly done with no intersecting pathways having green at the same time. With these there are 16 states in total.
-    \newline
-    Pedestrain crossing is not considered as the Borella Junction has an underground crossing. A 10 bit counter is used, and throughout each full count the trasition between states happen sequentiall, and then the procedure will iterate.
-    \newpage
-    \appendix
-
-
-    \section{FP Add/Sub Implementation}
+    Transition between states properly done with no intersecting pathways having green at the same time.
+    With these there are 12 states in total. These states can be realized using four flip-flops and required
+    combinational circuitories. State Diagram illustrating all the 12 states is as follows.
     \begin{figure}[h]
-        \begin{center}
-            \includegraphics[width=\textwidth]{algorithm}
-        \end{center}
+               \centering
+               \includegraphics[width=.8\textwidth]{trafic_light}
+        \caption*{State Diagram}
     \end{figure}
+
+    \newline
+    Pedestrain crossing is not considered as the Borella Junction has an underground crossing.
+    A 10 bit counter is used, and throughout each full count the trasition between states happen sequentiall,
+    and then the procedure will iterate.
+    \newpage
+    \begin{figure}[h]
+        \centering
+        \includegraphics[width=\textwidth]{state_diagram}
+        \caption*{Excitation Table of Different States}
+    \end{figure}
+Due to the larger size of variables, simulation results are not included with the report.
+
 \end{document}
