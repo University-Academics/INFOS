@@ -370,3 +370,6 @@ TSWLatexianTemp*
 MyProcessor/
 Processor/RISCV-RV32I-Processor.qws
 Processor/db/
+Processor/incremental_db/
+Processor/output_files/
+Processor/simulation/
