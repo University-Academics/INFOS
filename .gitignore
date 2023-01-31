@@ -368,3 +368,5 @@ TSWLatexianTemp*
 # Uncomment the next line to have this generated file ignored.
 #*Notes.bib
 MyProcessor/
+Processor/RISCV-RV32I-Processor.qws
+Processor/db/
