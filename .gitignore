@@ -373,3 +373,7 @@ Processor/db/
 Processor/incremental_db/
 Processor/output_files/
 Processor/simulation/
+Processor/greybox_tmp/
+Processor/src/InstructionMem_bb.v
+Processor/src/InstructionMem_inst.v
+Processor/src/InstructionMem.qip
