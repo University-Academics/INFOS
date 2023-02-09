@@ -23,7 +23,8 @@ module cache_memory
     parameter   CPU_ADDR_SIZE       =  32,
     parameter   WORD_SIZE           =  32,
     parameter   LINE_SIZE           = 128,
-    parameter   MEMORY_ADDR_SIZE    =  14 
+    parameter   MEMORY_ADDR_SIZE    =  14,
+    parameter   MEMORY_DELAY_CYCLES =   5
 )
 (
     input wire                              clk,
@@ -94,8 +95,11 @@ reg     [3:0]                               vic_hit_index,
                                             rand_choice_index;
 reg                                         selected;
 reg                                         line_sel_req;
-reg     [1:0]                               randomizer_weight,
-                                            randomizer_acc;
+reg     [1:0]                               randomizer_acc;
+reg     [2:0]                               mem_delay_acc;
+
+
+
 
 
 // WIRES IN THE MIDDLE
@@ -103,6 +107,7 @@ wire    [3:0]                       cache_offset;
 wire    [CACHE_INDEX_SIZE-1:0]      cache_index;
 wire    [CACHE_TAG_SIZE-1:0]        cache_tag;
 wire    [VICTIM_TAG_SIZE-1:0]       victim_tag;
+wire    [1:0]                       randomizer_weight;
 
 assign cache_offset         = cpu_addr[3:0];
 assign cache_index          = cpu_addr[CACHE_INDEX_SIZE+3:4];
@@ -234,14 +239,63 @@ always @(posedge clk)
 begin
     case(cache_state)
     IDLE:begin
-        cpu_wait <= 0;
-        // If write operation
-        if (cpu_wr_re)begin
-            data_to_store   <=  cpu_data_out;
-            type_to_store   <=  byte_selection;
-            index_to_store  <=  cpu_addr[CACHE_INDEX_SIZE+3:4];
-            offset_to_store <=  cpu_addr[3:0];
+
+        // ALWAYS STORE THE WRITING DATA INORDER FOR MEMORY TO ALLOW WRITING PROPERLY
+        data_to_store   <=  cpu_data_out;
+        type_to_store   <=  byte_selection;
+        index_to_store  <=  cache_index;
+        offset_to_store <=  cache_offset;
+
+        // VALID MEMORY OPERATION
+        if (byte_selection != 2'b00)begin
+
+            // CACHE HIT AND WRITE INSTRUCTION
+            if (cpu_valid && cpu_wr_re)begin
+                cache_state <= CACHE_WRITE;
+                line_sel_req <= 0;
+                cpu_wait <= 1;
+            end
+
+            // CACHE HIT AND READ INSTRUCTION
+            if (cpu_valid && ~cpu_wr_re)begin
+                cache_state <= IDLE;
+                line_sel_req < = 1;
+                cpu_wait <= 0;
+            end
+
+            // VICTIM HIT
+            else if(vic_tag[victim_line]==victim_tag && vic_valid[victim_line])begin
+                cache_state <= VICTIM_EXCHAGE;
+                line_sel_req <= 0;
+                cpu_wait <= 1;
+            end
+
+            // VICTIM NOT DIRTY OR VICTIM NOT VALID
+            else if (~vic_dirty[victim_line] || ~vic_valid[victim_line])begin
+                cache_state <= CACHE_ALLOCATE;
+                line_sel_req <= 0;
+                cpu_wait <= 1;
+            end
+
+            // VICTIM VALID AND DIRTY
+            else begin
+                cache_state <=  WRITE_BACK;
+                line_sel_req <= victim_line;
+                cpu_wait <= 1;
+            end
+
         end
+
+        // ENSURING PROPER LOGIC ASSIGNMENT IN IDLE STATE
+        else begin
+            line_sel_req    <= 1;
+            cpu_wait        <= 1;
+        end
+        
+        // ENSURING NO OTHER OPERATIONS ARE HAPPENING
+        mem_wren <= 0;
+
+
     end
 
     // UPDATE STATES CACHE HIT, VICTIM HIT, VICTIM LINE SELECTION, HIT REQUEST
@@ -314,51 +368,53 @@ begin
         if (cpu_wr_re)begin
             cac_dirty[cache_index]  <= 1;
 
-            case(byte_selection)
+            case(type_to_store)
                 2'b00: // INVALID
                 begin
+                    // some thing went wrong
+                    cache_state <= IDLE;
                 end
                 2'b01: // BYTE OPERATION
                 begin
-                    case(cache_offset)
-                    4'b0000:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:8],cpu_data_out[7:0]};
-                    4'b0001:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:16],cpu_data_out[7:0],mem_data_out[7:0]};
-                    4'b0010:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:24],cpu_data_out[7:0],mem_data_out[15:0]};
-                    4'b0011:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:32],cpu_data_out[7:0],mem_data_out[23:0]};
-                    4'b0100:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:40],cpu_data_out[7:0],mem_data_out[31:0]};
-                    4'b0101:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:48],cpu_data_out[7:0],mem_data_out[39:0]};
-                    4'b0110:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:56],cpu_data_out[7:0],mem_data_out[47:0]};
-                    4'b0111:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:64],cpu_data_out[7:0],mem_data_out[55:0]};
-                    4'b1000:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:72],cpu_data_out[7:0],mem_data_out[63:0]};
-                    4'b1001:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:80],cpu_data_out[7:0],mem_data_out[71:0]};
-                    4'b1010:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:88],cpu_data_out[7:0],mem_data_out[79:0]};
-                    4'b1011:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:96],cpu_data_out[7:0],mem_data_out[87:0]};
-                    4'b1100:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:104],cpu_data_out[7:0],mem_data_out[95:0]};
-                    4'b1101:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:112],cpu_data_out[7:0],mem_data_out[103:0]};
-                    4'b1110:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:120],cpu_data_out[7:0],mem_data_out[111:0]};
-                    4'b1111:    cac[cache_index] <=   {cpu_data_out[7:0],mem_data_out[119:0]};
+                    case(offset_to_store)
+                    4'b0000:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:8],data_to_store[7:0]};
+                    4'b0001:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:16],data_to_store[7:0],mem_data_out[7:0]};
+                    4'b0010:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:24],data_to_store[7:0],mem_data_out[15:0]};
+                    4'b0011:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:32],data_to_store[7:0],mem_data_out[23:0]};
+                    4'b0100:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:40],data_to_store[7:0],mem_data_out[31:0]};
+                    4'b0101:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:48],data_to_store[7:0],mem_data_out[39:0]};
+                    4'b0110:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:56],data_to_store[7:0],mem_data_out[47:0]};
+                    4'b0111:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:64],data_to_store[7:0],mem_data_out[55:0]};
+                    4'b1000:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:72],data_to_store[7:0],mem_data_out[63:0]};
+                    4'b1001:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:80],data_to_store[7:0],mem_data_out[71:0]};
+                    4'b1010:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:88],data_to_store[7:0],mem_data_out[79:0]};
+                    4'b1011:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:96],data_to_store[7:0],mem_data_out[87:0]};
+                    4'b1100:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:104],data_to_store[7:0],mem_data_out[95:0]};
+                    4'b1101:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:112],data_to_store[7:0],mem_data_out[103:0]};
+                    4'b1110:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:120],cpu_data_out[7:0],mem_data_out[111:0]};
+                    4'b1111:    cac[index_to_store] <=   {data_to_store[7:0],mem_data_out[119:0]};
                     endcase
                 end
                 2'b10: // HALF WORD
                 begin
-                    case(cache_offset)
-                    4'b0000:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:16],cpu_data_out[15:0]};
-                    4'b0010:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:32],cpu_data_out[15:0],mem_data_out[15:0]};
-                    4'b0100:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:48],cpu_data_out[15:0],mem_data_out[31:0]};
-                    4'b0110:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:64],cpu_data_out[15:0],mem_data_out[47:0]};
-                    4'b1000:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:80],cpu_data_out[15:0],mem_data_out[63:0]};
-                    4'b1010:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:96],cpu_data_out[15:0],mem_data_out[79:0]};
-                    4'b1100:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:112],cpu_data_out[15:0],mem_data_out[95:0]};
-                    4'b1110:    cac[cache_index] <=   {cpu_data_out[15:0],mem_data_out[111:0]};
+                    case(offset_to_store)
+                    4'b0000:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:16],data_to_store[15:0]};
+                    4'b0010:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:32],data_to_store[15:0],mem_data_out[15:0]};
+                    4'b0100:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:48],data_to_store[15:0],mem_data_out[31:0]};
+                    4'b0110:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:64],data_to_store[15:0],mem_data_out[47:0]};
+                    4'b1000:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:80],data_to_store[15:0],mem_data_out[63:0]};
+                    4'b1010:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:96],data_to_store[15:0],mem_data_out[79:0]};
+                    4'b1100:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:112],data_to_store[15:0],mem_data_out[95:0]};
+                    4'b1110:    cac[index_to_store] <=   {data_to_store[15:0],mem_data_out[111:0]};
                     endcase
                 end
                 2'b11: // FULL WORD
                 begin
-                    case(cache_offset)
-                    4'b0000:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:32],cpu_data_out};
-                    4'b0100:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:64],cpu_data_out,mem_data_out[31:0]};
-                    4'b1000:    cac[cache_index] <=   {mem_data_out[LINE_SIZE-1:96],cpu_data_out,mem_data_out[63:0]};
-                    4'b1100:    cac[cache_index] <=   {cpu_data_out,mem_data_out[95:0]};
+                    case(offset_to_store)
+                    4'b0000:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:32],data_to_store};
+                    4'b0100:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:64],data_to_store,mem_data_out[31:0]};
+                    4'b1000:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:96],data_to_store,mem_data_out[63:0]};
+                    4'b1100:    cac[index_to_store] <=   {data_to_store,mem_data_out[95:0]};
                     endcase
                 end
             endcase
@@ -366,8 +422,8 @@ begin
 
         // READ INSTRUCTION
         else begin
-            cac_dirty[cache_index]      <= 1'b1;
-            cac[cache_index]            <= mem_data_out;
+            cac_dirty[index_to_store]      <= 1'b1;
+            cac[index_to_store]            <= mem_data_out;
         end
 
         cac_tag[cache_index]    <= cache_tag;
@@ -381,51 +437,51 @@ begin
         if(cpu_wr_re)begin
             cac_dirty[cache_index]  <= 1;
             
-            case(byte_selection)
+            case(type_to_store)
                 2'b00: // INVALID
                 begin
                 end
                 2'b01: // BYTE OPERATION
                 begin
-                    case(cache_offset)
-                    4'b0000:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:8],cpu_data_out[7:0]};
-                    4'b0001:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:16],cpu_data_out[7:0],vic[victim_line][7:0]};
-                    4'b0010:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:24],cpu_data_out[7:0],vic[victim_line][15:0]};
-                    4'b0011:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:32],cpu_data_out[7:0],vic[victim_line][23:0]};
-                    4'b0100:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:40],cpu_data_out[7:0],vic[victim_line][31:0]};
-                    4'b0101:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:48],cpu_data_out[7:0],vic[victim_line][39:0]};
-                    4'b0110:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:56],cpu_data_out[7:0],vic[victim_line][47:0]};
-                    4'b0111:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:64],cpu_data_out[7:0],vic[victim_line][55:0]};
-                    4'b1000:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:72],cpu_data_out[7:0],vic[victim_line][63:0]};
-                    4'b1001:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:80],cpu_data_out[7:0],vic[victim_line][71:0]};
-                    4'b1010:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:88],cpu_data_out[7:0],vic[victim_line][79:0]};
-                    4'b1011:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:96],cpu_data_out[7:0],vic[victim_line][87:0]};
-                    4'b1100:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:104],cpu_data_out[7:0],vic[victim_line][95:0]};
-                    4'b1101:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:112],cpu_data_out[7:0],vic[victim_line][103:0]};
-                    4'b1110:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:120],cpu_data_out[7:0],vic[victim_line][111:0]};
-                    4'b1111:    cac[cache_index] <=   {cpu_data_out[7:0],vic[victim_line][119:0]};
+                    case(offset_to_store)
+                    4'b0000:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:8],data_to_store[7:0]};
+                    4'b0001:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:16],data_to_store[7:0],vic[victim_line][7:0]};
+                    4'b0010:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:24],data_to_store[7:0],vic[victim_line][15:0]};
+                    4'b0011:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:32],data_to_store[7:0],vic[victim_line][23:0]};
+                    4'b0100:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:40],data_to_store[7:0],vic[victim_line][31:0]};
+                    4'b0101:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:48],data_to_store[7:0],vic[victim_line][39:0]};
+                    4'b0110:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:56],data_to_store[7:0],vic[victim_line][47:0]};
+                    4'b0111:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:64],data_to_store[7:0],vic[victim_line][55:0]};
+                    4'b1000:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:72],data_to_store[7:0],vic[victim_line][63:0]};
+                    4'b1001:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:80],data_to_store[7:0],vic[victim_line][71:0]};
+                    4'b1010:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:88],data_to_store[7:0],vic[victim_line][79:0]};
+                    4'b1011:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:96],data_to_store[7:0],vic[victim_line][87:0]};
+                    4'b1100:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:104],data_to_store[7:0],vic[victim_line][95:0]};
+                    4'b1101:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:112],data_to_store[7:0],vic[victim_line][103:0]};
+                    4'b1110:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:120],data_to_store[7:0],vic[victim_line][111:0]};
+                    4'b1111:    cac[index_to_store] <=   {data_to_store[7:0],vic[victim_line][119:0]};
                     endcase
                 end
                 2'b10: // HALF WORD
                 begin
-                    case(cache_offset)
-                    4'b0000:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:16],cpu_data_out[15:0]};
-                    4'b0010:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:32],cpu_data_out[15:0],vic[victim_line][15:0]};
-                    4'b0100:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:48],cpu_data_out[15:0],vic[victim_line][31:0]};
-                    4'b0110:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:64],cpu_data_out[15:0],vic[victim_line][47:0]};
-                    4'b1000:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:80],cpu_data_out[15:0],vic[victim_line][63:0]};
-                    4'b1010:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:96],cpu_data_out[15:0],vic[victim_line][79:0]};
-                    4'b1100:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:112],cpu_data_out[15:0],vic[victim_line][95:0]};
-                    4'b1110:    cac[cache_index] <=   {cpu_data_out[15:0],vic[victim_line][111:0]};
+                    case(offset_to_store)
+                    4'b0000:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:16],data_to_store[15:0]};
+                    4'b0010:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:32],data_to_store[15:0],vic[victim_line][15:0]};
+                    4'b0100:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:48],data_to_store[15:0],vic[victim_line][31:0]};
+                    4'b0110:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:64],data_to_store[15:0],vic[victim_line][47:0]};
+                    4'b1000:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:80],data_to_store[15:0],vic[victim_line][63:0]};
+                    4'b1010:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:96],data_to_store[15:0],vic[victim_line][79:0]};
+                    4'b1100:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:112],data_to_store[15:0],vic[victim_line][95:0]};
+                    4'b1110:    cac[index_to_store] <=   {data_to_store[15:0],vic[victim_line][111:0]};
                     endcase
                 end
                 2'b11: // FULL WORD
                 begin
-                    case(cache_offset)
-                    4'b0000:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:32],cpu_data_out};
-                    4'b0100:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:64],cpu_data_out,vic[victim_line][31:0]};
-                    4'b1000:    cac[cache_index] <=   {vic[victim_line][LINE_SIZE-1:96],cpu_data_out,vic[victim_line][63:0]};
-                    4'b1100:    cac[cache_index] <=   {cpu_data_out,vic[victim_line][95:0]};
+                    case(offset_to_store)
+                    4'b0000:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:32],data_to_store};
+                    4'b0100:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:64],data_to_store,vic[victim_line][31:0]};
+                    4'b1000:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:96],data_to_store,vic[victim_line][63:0]};
+                    4'b1100:    cac[index_to_store] <=   {data_to_store,vic[victim_line][95:0]};
                     endcase
         
                 end
