@@ -34,7 +34,7 @@ module cache_memory
     input wire  [LINE_SIZE-1:0]             mem_data_out,
     output reg                              mem_wren,
     output reg  [LINE_SIZE-1:0]             mem_data_in,
-    output wire [MEMORY_ADDR_SIZE-1:0]      mem_addr,
+    output reg  [MEMORY_ADDR_SIZE-1:0]      mem_addr,
     output reg  [WORD_SIZE-1:0]             cpu_data_in,
     output reg                              cpu_ready,
     output reg                              cpu_wait
@@ -43,7 +43,7 @@ module cache_memory
 
 // DEFINING STATES
 parameter   IDLE                = 'd01,             
-            COMPARE_TAG         = 'd02,             // UPDATING CACHE HIT, VICTIM HIT STATES
+            CACHE_WRITE         = 'd02,             // UPDATING CACHE HIT, VICTIM HIT STATES
             CACHE_ALLOCATE      = 'd03,             // MEMORY -> CACHE -> VICTIM
             VICTIM_EXCHANGE     = 'd04,             // CACHE <-> VICTIM
             WRITE_BACK          = 'd05;             // VICTIM -> MEMORY
@@ -67,15 +67,21 @@ parameter   CACHE_DEPTH         = 128,
             
 
 // DEFINING THE CACHE AND VICTIM CACHE
-reg     [LINE_SIZE-1:0]                     cac                 [CACHE_DEPTH-1:0];
-reg     [CACHE_TAG_SIZE-1:0]                cac_tag             [CACHE_DEPTH-1:0];
-reg                                         cac_valid           [CACHE_DEPTH-1:0];
-reg                                         cac_dirty           [CACHE_DEPTH-1:0];
-reg     [LINE_SIZE-1:0]                     vic                 [VICTIM_DEPTH-1:0];
-reg     [VICTIM_TAG_SIZE-1:0]               vic_tag             [VICTIM_DEPTH-1:0];
-reg                                         vic_valid           [VICTIM_DEPTH-1:0];
-reg                                         vic_dirty           [VICTIM_DEPTH-1:0];
-reg     [2:0]                               vic_NMRU            [VICTIM_DEPTH-1:0];
+reg     [LINE_SIZE-1:0]                     cac                 [0:CACHE_DEPTH-1];
+reg     [CACHE_TAG_SIZE-1:0]                cac_tag             [0:CACHE_DEPTH-1];
+reg                                         cac_valid           [0:CACHE_DEPTH-1];
+reg                                         cac_dirty           [0:CACHE_DEPTH-1];
+reg     [LINE_SIZE-1:0]                     vic                 [0:VICTIM_DEPTH-1];
+reg     [VICTIM_TAG_SIZE-1:0]               vic_tag             [0:VICTIM_DEPTH-1];
+reg                                         vic_valid           [0:VICTIM_DEPTH-1];
+reg                                         vic_dirty           [0:VICTIM_DEPTH-1];
+reg     [2:0]                               vic_NMRU            [0:VICTIM_DEPTH-1];
+
+// STORING WRITING DATA AND ADDRESS INORDER FOR CPU TO PROCEED
+reg     [WORD_SIZE-1:0]                     data_to_store;
+reg     [1:0]                               type_to_store;
+reg     [CACHE_INDEX_SIZE-1:0]              index_to_store;
+reg     [3:0]                               offset_to_store;
 
 // SPECIAL PURPOSE REGISTERS
 reg     [2:0]                               cache_state;
@@ -83,6 +89,14 @@ reg                                         cache_hit;
 reg                                         victim_hit;
 reg                                         dealloc_req;
 reg                                         victim_line;
+reg     [3:0]                               vic_hit_index,
+                                            cle_find_index,
+                                            rand_choice_index;
+reg                                         selected;
+reg                                         line_sel_req;
+reg     [1:0]                               randomizer_weight,
+                                            randomizer_acc;
+
 
 // WIRES IN THE MIDDLE
 wire    [3:0]                       cache_offset;
@@ -91,9 +105,44 @@ wire    [CACHE_TAG_SIZE-1:0]        cache_tag;
 wire    [VICTIM_TAG_SIZE-1:0]       victim_tag;
 
 assign cache_offset         = cpu_addr[3:0];
-assign cache_index          = cpu_addr[CACHE_INDEX_SIZE+3:3];
+assign cache_index          = cpu_addr[CACHE_INDEX_SIZE+3:4];
 assign cache_tag            = cpu_addr[CACHE_TAG_SIZE+CACHE_INDEX_SIZE+3:CACHE_INDEX_SIZE+4];
 assign victim_tag           = {cache_tag,cache_index};
+assign randomizer_weight    = cpu_addr[3:2];                                                        // USING WORD ADDRESS FROM CPU REQUEST TO RANDOMIZE THE VICTIM LINE SELECTION
+
+// HANDLING THE VALID BIT (THE WHOLE TASK OF INDICATING THE DATA IS READY IS LEFT TO THE LOGIC THAT PUTS THE TAG)
+always@(*)
+    if (cac_tag[cache_index]==cache_tag && cac_valid[cache_index])
+        cpu_ready = 1'b1;
+    else
+        cpu_ready = 1'b0;
+
+// VICTIM LINE SELECTION PART: IF VICTIM HIT CHOOSE THAT LINE --> DIRTYLESS NMRU LINE --> RANDOM LINE FROM AVAILABLE ONES
+always@(*)begin
+    if (line_sel_req)begin
+        selected = 0;
+        randomizer_acc = 0;
+        for (vic_hit_index = 0;vic_hit_index < VICTIM_DEPTH;vic_hit_index = vic_hit_index + 1)
+            if (vic_tag[victim_line] == victim_tag)begin
+                victim_line = vic_hit_index;
+                selected = 1;
+            end
+        for (cle_find_index = 0;cle_find_index<VICTIM_DEPTH;cle_find_index = cle_find_index + 1)
+            if (~vic_NMRU[cle_find_index] && ~vic_NMRU[cle_find_index] && ~selected)begin
+                victim_line = cle_find_index;
+                selected = 1;
+            end
+        for (rand_choice_index = 0;rand_choice_index<VICTIM_DEPTH;rand_choice_index = rand_choice_index + 1)
+            if(~vic_NMRU[rand_choice_index] && ~selected)begin
+                if(randomizer_acc == randomizer_weight)begin
+                    victim_line = rand_choice_index;
+                    selected =1;
+                end
+                else randomizer_acc= randomizer_acc + 1;
+            end
+    end
+end
+
 
 // ASSINGNING THE CPU_OUT LINE
 always@(*)begin
@@ -150,24 +199,34 @@ end
 // DELAYING RELATED PARAMETERS
 parameter MEMORY_DELAY_CYCLE = 6;
 
-integer i,j;
+integer cac_init_var,vic_init_var;
 
 //----------------------------------------------------------------------------------------------------//
 // INITIALIZING THE BLOCKS AS REQUIRED
 initial begin
-    for(i=0;i<CACHE_DEPTH;i=i+1)begin
-        cac[i] <= 0;
-        cac_tag[i] <= 0;
-        cac_valid[i] <= 0;
-        cac_dirty[i] <= 0;
+    for(cac_init_var=0;cac_init_var<CACHE_DEPTH;cac_init_var=cac_init_var+1)begin
+        cac[cac_init_var] <= 0;
+        cac_tag[cac_init_var] <= 0;
+        cac_valid[cac_init_var] <= 0;
+        cac_dirty[cac_init_var] <= 0;
     end
-    for (j=0;j<VICTIM_DEPTH;j=j+1)begin
-        vic[j] <= 0;
-        vic_tag[j] <= 0;
-        vic_valid[j] <= 0;
-        vic_dirty[j] <= 0;
+    for (vic_init_var=0;vic_init_var<VICTIM_DEPTH;vic_init_var=vic_init_var+1)begin
+        vic[vic_init_var] <= 0;
+        vic_tag[vic_init_var] <= 0;
+        vic_valid[vic_init_var] <= 0;
+        vic_dirty[vic_init_var] <= 0;
     end
     cache_state = IDLE;
+
+    // RANDOM INITIALIZATION TO START THE GAME
+    vic_NMRU [0] = 2'b00;
+    vic_NMRU [1] = 2'b00;
+    vic_NMRU [2] = 2'b00;
+    vic_NMRU [3] = 2'b00;
+    vic_NMRU [4] = 2'b00;
+    vic_NMRU [5] = 2'b01;
+    vic_NMRU [6] = 2'b10;
+    vic_NMRU [7] = 2'b11;
 end
 //----------------------------------------------------------------------------------------------------//
 // DEFINING THE TASKS OF EACH STATES
@@ -175,11 +234,69 @@ always @(posedge clk)
 begin
     case(cache_state)
     IDLE:begin
+        cpu_wait <= 0;
+        // If write operation
+        if (cpu_wr_re)begin
+            data_to_store   <=  cpu_data_out;
+            type_to_store   <=  byte_selection;
+            index_to_store  <=  cpu_addr[CACHE_INDEX_SIZE+3:4];
+            offset_to_store <=  cpu_addr[3:0];
+        end
     end
 
     // UPDATE STATES CACHE HIT, VICTIM HIT, VICTIM LINE SELECTION, HIT REQUEST
-    COMPARE_TAG:begin
-
+    CACHE_WRITE:begin
+        case(type_to_store)
+            2'b00:begin
+                // Invalid so direct it to case IDLE
+                cache_state <= IDLE;
+            end
+           2'b01: // BYTE OPERATION
+        begin
+            case(offset_to_store)
+            4'b0000:    cac[index_to_store][7:0]    <=  data_to_store[7:0];
+            4'b0001:    cac[index_to_store][15:8]   <=  data_to_store[7:0];
+            4'b0010:    cac[index_to_store][23:16]  <=  data_to_store[7:0];
+            4'b0011:    cac[index_to_store][31:24]  <=  data_to_store[7:0];
+            4'b0100:    cac[index_to_store][39:32]  <=  data_to_store[7:0];
+            4'b0101:    cac[index_to_store][47:40]  <=  data_to_store[7:0];
+            4'b0110:    cac[index_to_store][55:48]  <=  data_to_store[7:0];
+            4'b0111:    cac[index_to_store][63:56]  <=  data_to_store[7:0];
+            4'b1000:    cac[index_to_store][71:64]  <=  data_to_store[7:0];
+            4'b1001:    cac[index_to_store][79:72]  <=  data_to_store[7:0];
+            4'b1010:    cac[index_to_store][87:80]  <=  data_to_store[7:0];
+            4'b1011:    cac[index_to_store][95:88]  <=  data_to_store[7:0];
+            4'b1100:    cac[index_to_store][103:96] <=  data_to_store[7:0];
+            4'b1101:    cac[index_to_store][111:104]<=  data_to_store[7:0];
+            4'b1110:    cac[index_to_store][119:112]<=  data_to_store[7:0];
+            4'b1111:    cac[index_to_store][127:120]<=  data_to_store[7:0];
+            endcase
+        end
+        2'b10: // HALF WORD
+        begin
+            case(cache_offset)
+            4'b0000:    cac[index_to_store][15:0]   <=  data_to_store[15:0];
+            4'b0010:    cac[index_to_store][31:16]  <=  data_to_store[15:0];
+            4'b0100:    cac[index_to_store][47:32]  <=  data_to_store[15:0];
+            4'b0110:    cac[index_to_store][63:48]  <=  data_to_store[15:0];
+            4'b1000:    cac[index_to_store][79:64]  <=  data_to_store[15:0];
+            4'b1010:    cac[index_to_store][95:80]  <=  data_to_store[15:0];
+            4'b1100:    cac[index_to_store][111:96] <=  data_to_store[15:0];
+            4'b1110:    cac[index_to_store][127:112]<=  data_to_store[15:0];
+            endcase
+        end
+        2'b11: // FULL WORD
+        begin
+            case(cache_offset)
+            4'b0000:    cac[index_to_store][31:0]   <=  data_to_store;
+            4'b0100:    cac[index_to_store][63:32]  <=  data_to_store;
+            4'b1000:    cac[index_to_store][95:64]  <=  data_to_store;
+            4'b1100:    cac[index_to_store][127:96] <=  data_to_store;
+            endcase
+        end
+        endcase
+        cache_state <= IDLE;
+        cpu_wait <= 1;
     end
 
     // MEMORY -> CACHE -> VICTIM
@@ -337,10 +454,15 @@ begin
         mem_addr <= vic_tag[victim_line];
         mem_data_in <= vic[victim_line];
         mem_wren <= 1;
-        vic_dirty[victim_line] <= 0b'0;
+        vic_dirty[victim_line] <= 0;
 
     end
 
     endcase
 end
+
+
+
+
+
 endmodule
