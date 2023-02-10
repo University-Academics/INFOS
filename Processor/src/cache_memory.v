@@ -24,7 +24,7 @@ module cache_memory
     parameter   WORD_SIZE           =  32,
     parameter   LINE_SIZE           = 128,
     parameter   MEMORY_ADDR_SIZE    =  14,
-    parameter   MEMORY_DELAY_CYCLES =   5
+    parameter   MEMORY_DELAY_CYCLES =   5           // SHOULD BE GREATER THAN 3
 )
 (
     input wire                              clk,
@@ -33,6 +33,7 @@ module cache_memory
     input wire  [1:0]                       byte_selection,
     input wire                              cpu_wr_re,
     input wire  [LINE_SIZE-1:0]             mem_data_out,
+
     output reg                              mem_wren,
     output reg  [LINE_SIZE-1:0]             mem_data_in,
     output reg  [MEMORY_ADDR_SIZE-1:0]      mem_addr,
@@ -78,7 +79,7 @@ reg                                         vic_valid           [0:VICTIM_DEPTH-
 reg                                         vic_dirty           [0:VICTIM_DEPTH-1];
 reg     [2:0]                               vic_NMRU            [0:VICTIM_DEPTH-1];
 
-// STORING WRITING DATA AND ADDRESS INORDER FOR CPU TO PROCEED
+// STORING DATA AND ADDRESS INORDER FOR CPU TO PROCEED WITH WRITE INSTRUCTION
 reg     [MEMORY_ADDR_SIZE-1:0]              mem_addr_to_store;
 reg     [WORD_SIZE-1:0]                     data_to_store;
 reg     [1:0]                               type_to_store;
@@ -114,29 +115,36 @@ assign victim_tag           = {cache_tag,cache_index};
 assign randomizer_weight    = cpu_addr[3:2];                                                        // USING WORD ADDRESS FROM CPU REQUEST TO RANDOMIZE THE VICTIM LINE SELECTION
 
 // HANDLING THE VALID BIT (THE WHOLE TASK OF INDICATING THE DATA IS READY IS LEFT TO THE LOGIC THAT PUTS THE TAG)
-always@(*)
+always@(*)begin
     if (cac_tag[cache_index]==cache_tag && cac_valid[cache_index])
         cpu_ready = 1'b1;
     else
         cpu_ready = 1'b0;
+end
 
 // VICTIM LINE SELECTION PART: IF VICTIM HIT CHOOSE THAT LINE --> DIRTYLESS NMRU LINE --> RANDOM LINE FROM AVAILABLE ONES
 always@(*)begin
     if (line_sel_req)begin
         selected = 0;
         randomizer_acc = 0;
+
+        // CHECKING WHETHER THE SAME TAG IS AVAILABLE SOMEWHERE
         for (vic_hit_index = 0;vic_hit_index < VICTIM_DEPTH;vic_hit_index = vic_hit_index + 1)
-            if (vic_tag[victim_line] == victim_tag)begin
+            if (vic_tag[vic_hit_index] == victim_tag)begin
                 victim_line = vic_hit_index;
                 selected = 1;
             end
+
+        // SEARCHING FOR DIRTY LESS LINES
         for (cle_find_index = 0;cle_find_index<VICTIM_DEPTH;cle_find_index = cle_find_index + 1)
-            if (~vic_NMRU[cle_find_index] && ~vic_NMRU[cle_find_index] && ~selected)begin
+            if (vic_NMRU[cle_find_index]==0 && ~vic_dirty[cle_find_index] && ~selected)begin
                 victim_line = cle_find_index;
                 selected = 1;
             end
+        
+        // RANDOMLY CHOOSE A LINE FROM AVAILABLE ONES
         for (rand_choice_index = 0;rand_choice_index<VICTIM_DEPTH;rand_choice_index = rand_choice_index + 1)
-            if(~vic_NMRU[rand_choice_index] && ~selected)begin
+            if(vic_NMRU[rand_choice_index]==0 && ~selected)begin
                 if(randomizer_acc == randomizer_weight)begin
                     victim_line = rand_choice_index;
                     selected =1;
@@ -217,9 +225,6 @@ initial begin
         vic_valid[vic_init_var] <= 0;
         vic_dirty[vic_init_var] <= 0;
     end
-    cache_state     <= IDLE;
-    line_sel_req    <= 1'b1;
-    cpu_wait        <= 1'b0;
 
     // RANDOM INITIALIZATION TO START THE GAME
     vic_NMRU [0] <= 2'b00;
@@ -230,6 +235,12 @@ initial begin
     vic_NMRU [5] <= 2'b00;
     vic_NMRU [6] <= 2'b00;
     vic_NMRU [7] <= 2'b00;
+
+
+    cache_state     <= IDLE;
+    line_sel_req    <= 1'b1;
+    cpu_wait        <= 1'b0;
+
 end
 
 //---------------------------------------------- CORE PART OF THE CODE: START ------------------------------------------------------//
