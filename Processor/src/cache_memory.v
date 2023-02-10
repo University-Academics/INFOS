@@ -79,17 +79,16 @@ reg                                         vic_dirty           [0:VICTIM_DEPTH-
 reg     [2:0]                               vic_NMRU            [0:VICTIM_DEPTH-1];
 
 // STORING WRITING DATA AND ADDRESS INORDER FOR CPU TO PROCEED
+reg     [MEMORY_ADDR_SIZE-1:0]              mem_addr_to_store;
 reg     [WORD_SIZE-1:0]                     data_to_store;
 reg     [1:0]                               type_to_store;
 reg     [CACHE_INDEX_SIZE-1:0]              index_to_store;
 reg     [3:0]                               offset_to_store;
+reg     [CACHE_TAG_SIZE-1:0]                tag_to_store;
 
 // SPECIAL PURPOSE REGISTERS
 reg     [2:0]                               cache_state;
-reg                                         cache_hit;
-reg                                         victim_hit;
-reg                                         dealloc_req;
-reg                                         victim_line;
+reg     [2:0]                               victim_line;
 reg     [3:0]                               vic_hit_index,
                                             cle_find_index,
                                             rand_choice_index;
@@ -97,7 +96,6 @@ reg                                         selected;
 reg                                         line_sel_req;
 reg     [1:0]                               randomizer_acc;
 reg     [2:0]                               mem_delay_acc;
-
 
 
 
@@ -201,9 +199,7 @@ always@(*)begin
     endcase
 end
 
-// DELAYING RELATED PARAMETERS
-parameter MEMORY_DELAY_CYCLE = 6;
-
+// INTEGERS USED FOR INITIALIZATION OF CACHE MEMORY CONTENTS
 integer cac_init_var,vic_init_var;
 
 //----------------------------------------------------------------------------------------------------//
@@ -221,19 +217,24 @@ initial begin
         vic_valid[vic_init_var] <= 0;
         vic_dirty[vic_init_var] <= 0;
     end
-    cache_state = IDLE;
+    cache_state     <= IDLE;
+    line_sel_req    <= 1'b1;
+    cpu_wait        <= 1'b0;
 
     // RANDOM INITIALIZATION TO START THE GAME
-    vic_NMRU [0] = 2'b00;
-    vic_NMRU [1] = 2'b00;
-    vic_NMRU [2] = 2'b00;
-    vic_NMRU [3] = 2'b00;
-    vic_NMRU [4] = 2'b00;
-    vic_NMRU [5] = 2'b01;
-    vic_NMRU [6] = 2'b10;
-    vic_NMRU [7] = 2'b11;
+    vic_NMRU [0] <= 2'b00;
+    vic_NMRU [1] <= 2'b00;
+    vic_NMRU [2] <= 2'b00;
+    vic_NMRU [3] <= 2'b00;
+    vic_NMRU [4] <= 2'b00;
+    vic_NMRU [5] <= 2'b00;
+    vic_NMRU [6] <= 2'b00;
+    vic_NMRU [7] <= 2'b00;
 end
-//----------------------------------------------------------------------------------------------------//
+
+//---------------------------------------------- CORE PART OF THE CODE: START ------------------------------------------------------//
+// VARIABLE FOR UPDATING VICTIM NMRU
+integer victim_nmru_update_var;
 // DEFINING THE TASKS OF EACH STATES
 always @(posedge clk)
 begin
@@ -241,31 +242,33 @@ begin
     IDLE:begin
 
         // ALWAYS STORE THE WRITING DATA INORDER FOR MEMORY TO ALLOW WRITING PROPERLY
-        data_to_store   <=  cpu_data_out;
-        type_to_store   <=  byte_selection;
-        index_to_store  <=  cache_index;
-        offset_to_store <=  cache_offset;
+        data_to_store       <=  cpu_data_out;
+        type_to_store       <=  byte_selection;
+        index_to_store      <=  cache_index;
+        offset_to_store     <=  cache_offset;
+        mem_addr_to_store   <=  victim_tag;
+        tag_to_store        <=  cache_tag;
 
         // VALID MEMORY OPERATION
         if (byte_selection != 2'b00)begin
 
             // CACHE HIT AND WRITE INSTRUCTION
-            if (cpu_valid && cpu_wr_re)begin
+            if (cpu_ready && cpu_wr_re)begin
                 cache_state <= CACHE_WRITE;
-                line_sel_req <= 0;
-                cpu_wait <= 1;
+                line_sel_req <= 1'b0;
+                cpu_wait <= 1'b1;
             end
 
             // CACHE HIT AND READ INSTRUCTION
-            if (cpu_valid && ~cpu_wr_re)begin
-                cache_state <= IDLE;
-                line_sel_req < = 1;
-                cpu_wait <= 0;
+            if (cpu_ready && ~cpu_wr_re)begin
+                cache_state     <= IDLE;
+                line_sel_req    <= 1'b1;
+                cpu_wait        <= 1'b0;
             end
 
             // VICTIM HIT
             else if(vic_tag[victim_line]==victim_tag && vic_valid[victim_line])begin
-                cache_state <= VICTIM_EXCHAGE;
+                cache_state <= VICTIM_EXCHANGE;
                 line_sel_req <= 0;
                 cpu_wait <= 1;
             end
@@ -273,40 +276,44 @@ begin
             // VICTIM NOT DIRTY OR VICTIM NOT VALID
             else if (~vic_dirty[victim_line] || ~vic_valid[victim_line])begin
                 cache_state <= CACHE_ALLOCATE;
-                line_sel_req <= 0;
-                cpu_wait <= 1;
+                line_sel_req <= 1'b0;
+                cpu_wait <= 1'b1;
+                mem_delay_acc <= 3'b000;
             end
 
             // VICTIM VALID AND DIRTY
             else begin
                 cache_state <=  WRITE_BACK;
-                line_sel_req <= victim_line;
-                cpu_wait <= 1;
+                line_sel_req <= 1'b0;
+                cpu_wait <= 1'b1;
+                mem_delay_acc <= 3'b000;
             end
 
         end
 
         // ENSURING PROPER LOGIC ASSIGNMENT IN IDLE STATE
         else begin
-            line_sel_req    <= 1;
-            cpu_wait        <= 1;
+            line_sel_req    <= 1'b1;
+            cpu_wait        <= 1'b0;
         end
         
         // ENSURING NO OTHER OPERATIONS ARE HAPPENING
-        mem_wren <= 0;
+        mem_wren <= 1'b0;
 
 
     end
 
-    // UPDATE STATES CACHE HIT, VICTIM HIT, VICTIM LINE SELECTION, HIT REQUEST
+    // CACHE HIT AND WRITE OPERATION
     CACHE_WRITE:begin
         case(type_to_store)
             2'b00:begin
                 // Invalid so direct it to case IDLE
                 cache_state <= IDLE;
+                cpu_wait <= 0;
+                line_sel_req <= 1;
             end
-           2'b01: // BYTE OPERATION
-        begin
+           2'b01: // BYTE OPERATION 
+           begin
             case(offset_to_store)
             4'b0000:    cac[index_to_store][7:0]    <=  data_to_store[7:0];
             4'b0001:    cac[index_to_store][15:8]   <=  data_to_store[7:0];
@@ -325,6 +332,7 @@ begin
             4'b1110:    cac[index_to_store][119:112]<=  data_to_store[7:0];
             4'b1111:    cac[index_to_store][127:120]<=  data_to_store[7:0];
             endcase
+            cac_dirty[index_to_store] <= 1'b1;
         end
         2'b10: // HALF WORD
         begin
@@ -338,6 +346,7 @@ begin
             4'b1100:    cac[index_to_store][111:96] <=  data_to_store[15:0];
             4'b1110:    cac[index_to_store][127:112]<=  data_to_store[15:0];
             endcase
+            cac_dirty[index_to_store] <= 1'b1;
         end
         2'b11: // FULL WORD
         begin
@@ -347,87 +356,122 @@ begin
             4'b1000:    cac[index_to_store][95:64]  <=  data_to_store;
             4'b1100:    cac[index_to_store][127:96] <=  data_to_store;
             endcase
+            cac_dirty[index_to_store] <= 1'b1;
         end
         endcase
         cache_state <= IDLE;
-        cpu_wait <= 1;
+        line_sel_req <= 1'b1;
+        cpu_wait <= 1'b0;
     end
 
     // MEMORY -> CACHE -> VICTIM
     CACHE_ALLOCATE:begin
 
-        // CACHE DATA VALID --> BRIGING DATA INTO VICTIM
-        if (cac_valid[cache_index])begin
-            vic[victim_line]        <= cac[cache_index];
-            vic_dirty[victim_line]  <= cac_dirty[cache_index];
-            vic_tag[victim_line]    <= {cac_tag[cache_index],cache_index};
-            vic_valid[victim_line]  <= 1'b1;
+        if(mem_delay_acc == MEMORY_DELAY_CYCLES - 3)begin
+            mem_delay_acc <= mem_delay_acc + 1;
+            mem_addr <= mem_addr_to_store;
+            // CACHE DATA VALID: CACHE -->  VICTIM
+            if (cac_valid[index_to_store])begin
+                vic[victim_line]        <= cac[index_to_store];
+                vic_dirty[victim_line]  <= cac_dirty[index_to_store];
+                vic_tag[victim_line]    <= {cac_tag[index_to_store],index_to_store};
+                vic_valid[victim_line]  <= 1'b1;
+
+                // UPDATING VICTIM NMRU
+                for(victim_nmru_update_var = 0;victim_nmru_update_var<VICTIM_DEPTH;victim_nmru_update_var = victim_nmru_update_var +1)begin
+                    if(victim_nmru_update_var == victim_line)
+                        vic_NMRU[victim_line] <= 2'b11;
+                    else if(vic_NMRU[victim_nmru_update_var != 2'b00]) 
+                        vic_NMRU[victim_nmru_update_var] <= vic_NMRU[victim_nmru_update_var] - 1;
+                end
+            end
         end
 
-        // WRITE INSTRUCTION
-        if (cpu_wr_re)begin
-            cac_dirty[cache_index]  <= 1;
+        if(mem_delay_acc == MEMORY_DELAY_CYCLES - 2)begin
 
-            case(type_to_store)
-                2'b00: // INVALID
-                begin
-                    // some thing went wrong
-                    cache_state <= IDLE;
-                end
-                2'b01: // BYTE OPERATION
-                begin
-                    case(offset_to_store)
-                    4'b0000:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:8],data_to_store[7:0]};
-                    4'b0001:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:16],data_to_store[7:0],mem_data_out[7:0]};
-                    4'b0010:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:24],data_to_store[7:0],mem_data_out[15:0]};
-                    4'b0011:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:32],data_to_store[7:0],mem_data_out[23:0]};
-                    4'b0100:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:40],data_to_store[7:0],mem_data_out[31:0]};
-                    4'b0101:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:48],data_to_store[7:0],mem_data_out[39:0]};
-                    4'b0110:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:56],data_to_store[7:0],mem_data_out[47:0]};
-                    4'b0111:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:64],data_to_store[7:0],mem_data_out[55:0]};
-                    4'b1000:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:72],data_to_store[7:0],mem_data_out[63:0]};
-                    4'b1001:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:80],data_to_store[7:0],mem_data_out[71:0]};
-                    4'b1010:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:88],data_to_store[7:0],mem_data_out[79:0]};
-                    4'b1011:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:96],data_to_store[7:0],mem_data_out[87:0]};
-                    4'b1100:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:104],data_to_store[7:0],mem_data_out[95:0]};
-                    4'b1101:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:112],data_to_store[7:0],mem_data_out[103:0]};
-                    4'b1110:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:120],cpu_data_out[7:0],mem_data_out[111:0]};
-                    4'b1111:    cac[index_to_store] <=   {data_to_store[7:0],mem_data_out[119:0]};
-                    endcase
-                end
-                2'b10: // HALF WORD
-                begin
-                    case(offset_to_store)
-                    4'b0000:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:16],data_to_store[15:0]};
-                    4'b0010:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:32],data_to_store[15:0],mem_data_out[15:0]};
-                    4'b0100:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:48],data_to_store[15:0],mem_data_out[31:0]};
-                    4'b0110:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:64],data_to_store[15:0],mem_data_out[47:0]};
-                    4'b1000:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:80],data_to_store[15:0],mem_data_out[63:0]};
-                    4'b1010:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:96],data_to_store[15:0],mem_data_out[79:0]};
-                    4'b1100:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:112],data_to_store[15:0],mem_data_out[95:0]};
-                    4'b1110:    cac[index_to_store] <=   {data_to_store[15:0],mem_data_out[111:0]};
-                    endcase
-                end
-                2'b11: // FULL WORD
-                begin
-                    case(offset_to_store)
-                    4'b0000:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:32],data_to_store};
-                    4'b0100:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:64],data_to_store,mem_data_out[31:0]};
-                    4'b1000:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:96],data_to_store,mem_data_out[63:0]};
-                    4'b1100:    cac[index_to_store] <=   {data_to_store,mem_data_out[95:0]};
-                    endcase
-                end
-            endcase
+            // WRITE INSTRUCTION
+            if (cpu_wr_re)begin
+                case(type_to_store)
+                    2'b00: // INVALID
+                    begin
+                        // some thing went wrong
+                        cache_state <= IDLE;
+                        cpu_wait <= 1'b0;
+                        line_sel_req <= 1'b1;
+                    end
+                    2'b01: // BYTE OPERATION
+                    begin
+                        case(offset_to_store)
+                        4'b0000:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:8],data_to_store[7:0]};
+                        4'b0001:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:16],data_to_store[7:0],mem_data_out[7:0]};
+                        4'b0010:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:24],data_to_store[7:0],mem_data_out[15:0]};
+                        4'b0011:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:32],data_to_store[7:0],mem_data_out[23:0]};
+                        4'b0100:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:40],data_to_store[7:0],mem_data_out[31:0]};
+                        4'b0101:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:48],data_to_store[7:0],mem_data_out[39:0]};
+                        4'b0110:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:56],data_to_store[7:0],mem_data_out[47:0]};
+                        4'b0111:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:64],data_to_store[7:0],mem_data_out[55:0]};
+                        4'b1000:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:72],data_to_store[7:0],mem_data_out[63:0]};
+                        4'b1001:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:80],data_to_store[7:0],mem_data_out[71:0]};
+                        4'b1010:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:88],data_to_store[7:0],mem_data_out[79:0]};
+                        4'b1011:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:96],data_to_store[7:0],mem_data_out[87:0]};
+                        4'b1100:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:104],data_to_store[7:0],mem_data_out[95:0]};
+                        4'b1101:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:112],data_to_store[7:0],mem_data_out[103:0]};
+                        4'b1110:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:120],cpu_data_out[7:0],mem_data_out[111:0]};
+                        4'b1111:    cac[index_to_store] <=   {data_to_store[7:0],mem_data_out[119:0]};
+                        endcase
+                        cac_dirty[index_to_store]  <= 1'b1;
+                    end
+                    2'b10: // HALF WORD
+                    begin
+                        case(offset_to_store)
+                        4'b0000:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:16],data_to_store[15:0]};
+                        4'b0010:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:32],data_to_store[15:0],mem_data_out[15:0]};
+                        4'b0100:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:48],data_to_store[15:0],mem_data_out[31:0]};
+                        4'b0110:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:64],data_to_store[15:0],mem_data_out[47:0]};
+                        4'b1000:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:80],data_to_store[15:0],mem_data_out[63:0]};
+                        4'b1010:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:96],data_to_store[15:0],mem_data_out[79:0]};
+                        4'b1100:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:112],data_to_store[15:0],mem_data_out[95:0]};
+                        4'b1110:    cac[index_to_store] <=   {data_to_store[15:0],mem_data_out[111:0]};
+                        endcase
+                        cac_dirty[index_to_store]  <= 1'b1;
+                    end
+                    2'b11: // FULL WORD
+                    begin
+                        case(offset_to_store)
+                        4'b0000:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:32],data_to_store};
+                        4'b0100:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:64],data_to_store,mem_data_out[31:0]};
+                        4'b1000:    cac[index_to_store] <=   {mem_data_out[LINE_SIZE-1:96],data_to_store,mem_data_out[63:0]};
+                        4'b1100:    cac[index_to_store] <=   {data_to_store,mem_data_out[95:0]};
+                        endcase
+                        cac_dirty[index_to_store]  <= 1'b1;
+                    end
+                endcase
+            end
+
+            // READ INSTRUCTION
+            else begin
+                cac_dirty[index_to_store]      <= 1'b0;
+                cac[index_to_store]            <= mem_data_out;
+            end
+
+            cac_valid[index_to_store]  <= 1'b1;
+            mem_delay_acc <= mem_delay_acc + 1;
+
+        end else if(mem_delay_acc == MEMORY_DELAY_CYCLES-1 ) begin
+            cache_state     <= IDLE;
+            line_sel_req    <= 1'b1;
+            cpu_wait        <= 1'b0;
+            cac_tag[index_to_store]  <= tag_to_store;
+            mem_delay_acc <= 3'b000;
         end
 
-        // READ INSTRUCTION
+        // HANDLING EXCEPTION
+        else if(mem_delay_acc >= MEMORY_DELAY_CYCLES)begin
+            mem_delay_acc <= 3'b000;
+        end
         else begin
-            cac_dirty[index_to_store]      <= 1'b1;
-            cac[index_to_store]            <= mem_data_out;
+            mem_delay_acc <= mem_delay_acc + 1;
         end
-
-        cac_tag[cache_index]    <= cache_tag;
-        cac_valid[cache_index]  <= 1;
     end
 
     // VICTIM <-> CACHE
@@ -435,11 +479,12 @@ begin
         
         // WRITE INSTRUCTION
         if(cpu_wr_re)begin
-            cac_dirty[cache_index]  <= 1;
-            
             case(type_to_store)
                 2'b00: // INVALID
                 begin
+                    cache_state     <= IDLE;
+                    line_sel_req    <= 1'b1;
+                    cpu_wait        <= 1'b0;
                 end
                 2'b01: // BYTE OPERATION
                 begin
@@ -461,6 +506,7 @@ begin
                     4'b1110:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:120],data_to_store[7:0],vic[victim_line][111:0]};
                     4'b1111:    cac[index_to_store] <=   {data_to_store[7:0],vic[victim_line][119:0]};
                     endcase
+                    cac_dirty[index_to_store]  <= 1'b1;
                 end
                 2'b10: // HALF WORD
                 begin
@@ -474,6 +520,7 @@ begin
                     4'b1100:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:112],data_to_store[15:0],vic[victim_line][95:0]};
                     4'b1110:    cac[index_to_store] <=   {data_to_store[15:0],vic[victim_line][111:0]};
                     endcase
+                    cac_dirty[index_to_store]  <= 1'b1;
                 end
                 2'b11: // FULL WORD
                 begin
@@ -483,7 +530,7 @@ begin
                     4'b1000:    cac[index_to_store] <=   {vic[victim_line][LINE_SIZE-1:96],data_to_store,vic[victim_line][63:0]};
                     4'b1100:    cac[index_to_store] <=   {data_to_store,vic[victim_line][95:0]};
                     endcase
-        
+                    cac_dirty[index_to_store]  <= 1'b1;
                 end
             endcase
         end
@@ -494,31 +541,50 @@ begin
             cac[cache_index]        <= vic[victim_line];
             cac_dirty[cache_index]  <= vic_dirty[victim_line];
         end
-        cac_tag[cache_index]    <= vic_tag[victim_line][CACHE_INDEX_SIZE+CACHE_TAG_SIZE-1:CACHE_INDEX_SIZE]; 
-        cac_valid[cache_index]  <= vic_valid[victim_line];
+        cac_tag[index_to_store]     <= vic_tag[victim_line][CACHE_INDEX_SIZE+CACHE_TAG_SIZE-1:CACHE_INDEX_SIZE]; 
+        cac_valid[index_to_store]      <= vic_valid[victim_line];
 
         // CACHE --> VICTIM
-        vic_tag[victim_line]    <=  {cac_tag[cache_index],cache_index};
-        vic[victim_line]        <= cac[cache_index];
-        vic_dirty[victim_line]  <= cac_dirty[cache_index];
-        vic_valid[victim_line]  <= cac_valid[cache_index];
+        vic_tag[victim_line]    <=  {cac_tag[index_to_store],index_to_store};
+        vic[victim_line]        <= cac[index_to_store];
+        vic_dirty[victim_line]  <= cac_dirty[index_to_store];
+        vic_valid[victim_line]  <= cac_valid[index_to_store];
+
+        // UPDATING VICTIM NMRU
+        for(victim_nmru_update_var = 0;victim_nmru_update_var<VICTIM_DEPTH;victim_nmru_update_var = victim_nmru_update_var +1)begin
+            if(victim_nmru_update_var == victim_line)
+                vic_NMRU[victim_line] <= 2'b11;
+            else if(vic_NMRU[victim_nmru_update_var != 2'b00]) 
+                vic_NMRU[victim_nmru_update_var] <= vic_NMRU[victim_nmru_update_var] - 1;
+        end
+
+        cache_state     <= IDLE;
+        line_sel_req    <= 1'b1;
+        cpu_wait        <= 1'b0;
     end
-
-
 
     WRITE_BACK:begin
-        mem_addr <= vic_tag[victim_line];
-        mem_data_in <= vic[victim_line];
-        mem_wren <= 1;
-        vic_dirty[victim_line] <= 0;
+        if(mem_delay_acc == MEMORY_DELAY_CYCLES-2)begin
+            mem_addr <= vic_tag[victim_line];
+            mem_data_in <= vic[victim_line];
+            mem_wren <= 1;
+            vic_dirty[victim_line] <= 0;
+            mem_delay_acc <= mem_delay_acc + 1;
+        end
+        else if(mem_delay_acc == MEMORY_DELAY_CYCLES - 1)begin
+            cache_state     <= CACHE_ALLOCATE;
+            mem_wren        <= 1'b0;
+            mem_delay_acc   <= 1'b0;
 
+            // ENSURING PURPOSES
+            line_sel_req    <= 1'b0;
+            cpu_wait        <= 1'b1;
+        end
+        else begin
+            mem_delay_acc <= mem_delay_acc + 1;
+        end
     end
-
     endcase
 end
-
-
-
-
-
+//---------------------------------------------------------------- CORE PART OF THE CODE: END ----------------------------------------------------------------//
 endmodule
