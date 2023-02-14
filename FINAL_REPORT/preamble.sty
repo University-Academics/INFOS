@@ -1,0 +1,53 @@
+\ProvidesPackage{preamble}
+
+%% Including Packages
+\usepackage[a4paper,top=1.5cm,bottom=1.5cm,left=2cm,right=2cm]{geometry}
+\usepackage[draft=false]{graphicx}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage[colorlinks = true,
+    linkcolor = blue,
+    urlcolor  = blue,
+    citecolor = blue,
+    anchorcolor = blue]{hyperref}
+\usepackage{sectsty}
+\usepackage{amsfonts}
+\usepackage{mdframed}
+\usepackage{booktabs}
+\usepackage{blindtext}
+\usepackage{enumitem}
+\usepackage{tocloft}
+\usepackage{amsmath}
+\usepackage{listings}
+\usepackage[indent=10pt]{parskip}
+\usepackage{verbatim}
+\usepackage{rotating}
+\usepackage{subcaption}
+\usepackage{pdfpages}
+\usepackage{multirow}
+\usepackage{makecell}
+%% Own Commands
+\newcommand{\HRule}{\rule{\linewidth}{0.05mm}}
+\definecolor{mBlue}{rgb}{0.1,0.1,0.75}
+% \renewcommand{\cftsecleader}{\cftdotfill{\cftdotsep}}
+
+% Setups
+\graphicspath{{./Images/}}
+\mdfsetup{%
+    linecolor=white,
+    backgroundcolor=gray!10,
+}
+\setcounter{tocdepth}{3}
+
+\lstdefinestyle{myStyle}{
+    belowcaptionskip=1\baselineskip,
+    breaklines=true,
+    frame=none,
+    numbers=none,
+    basicstyle=\footnotesize\ttfamily,
+    keywordstyle=\bfseries\color{green!40!black},
+    commentstyle=\itshape\color{purple!40!black},
+    identifierstyle=\color{blue},
+    backgroundcolor=\color{gray!10!white},
+}
