@@ -378,3 +378,6 @@ Processor/src/InstructionMem_bb.v
 Processor/src/InstructionMem_inst.v
 Processor/verilator_testbench/obj_dir/
 Processor/verilator_testbench/-
+
+
+*.vscode
